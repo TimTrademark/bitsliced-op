@@ -1,0 +1,8 @@
+[package]
+name = "bitsliced-op"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wide = "1.1.1"
+
