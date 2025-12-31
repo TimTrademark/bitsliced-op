@@ -5,9 +5,9 @@ struct BenchmarkResult {
     duration: Duration,
 }
 
-pub fn benchmark<F>(name: &str, runs: u64, warmup: u64, parallel_count: u64, func: F)
+pub fn benchmark<F>(name: &str, runs: u64, warmup: u64, parallel_count: u64, mut func: F)
 where
-    F: Fn(),
+    F: FnMut(),
 {
     for _ in 0..warmup {
         func();

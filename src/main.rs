@@ -1,6 +1,9 @@
-use std::env;
+use std::{env, hint::black_box};
 
-use bitsliced_op::{benchmark::benchmark, bitsliced_add};
+use bitsliced_op::{
+    benchmark::benchmark, bitsliced_add, bitsliced_add_inline, bitsliced_modulo_power_of_two,
+    bitsliced_modulo_power_of_two_inline,
+};
 use wide::u64x8;
 
 fn main() {
@@ -14,12 +17,13 @@ fn main() {
 
 fn start_benchmark(benchmark_name: &str) {
     match benchmark_name {
-        "n" | "normal" => {
-            benchmark("normal_addition", 100_000_000, 10000, 1, || {
-                let _: u64 = 1 + 1;
+        "na" | "normal_addition" => {
+            benchmark("normal_addition", 1_000_000, 10000, 1, || {
+                let result = black_box(1) + black_box(1);
+                black_box(result);
             });
         }
-        "b" | "bitsliced" => {
+        "ba" | "bitsliced_addition" => {
             let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);
             let zero = u64x8::ZERO;
             let mut a = [zero; 64];
@@ -27,8 +31,36 @@ fn start_benchmark(benchmark_name: &str) {
             let mut b = [zero; 64];
             b[63] = all_ones;
 
-            benchmark("bitsliced_addition", 100_000_000, 10000, 64, || {
+            benchmark("bitsliced_addition", 1_000_000, 10000, 64, || {
                 let _ = bitsliced_add(&a, &b);
+            });
+        }
+        "bai" | "bitsliced_addition_inline" => {
+            let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);
+            let zero = u64x8::ZERO;
+            let mut a = [zero; 64];
+            a[63] = all_ones;
+            let mut b = [zero; 64];
+            b[63] = all_ones;
+
+            benchmark("bitsliced_addition_inline", 1_000_000, 10000, 64, || {
+                bitsliced_add_inline(&mut a, &b);
+            });
+        }
+        "bm" | "bitsliced_modulo" => {
+            let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);
+            let a = [all_ones; 64];
+
+            benchmark("bitsliced_modulo", 1_000_000, 10000, 64, || {
+                let _ = bitsliced_modulo_power_of_two(&a, 56);
+            });
+        }
+        "bmi" | "bitsliced_modulo_inline" => {
+            let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);
+            let mut a = [all_ones; 64];
+
+            benchmark("bitsliced_modulo_inline", 1_000_000, 10000, 64, || {
+                let _ = bitsliced_modulo_power_of_two_inline(&mut a, 56);
             });
         }
         _ => {
