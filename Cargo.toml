@@ -2,6 +2,12 @@
 name = "bitsliced-op"
 version = "0.4.0"
 edition = "2024"
+authors = ["TimTrademark <https://github.com/TimTrademark>"]
+repository = "https://github.com/TimTrademark/bitsliced-op"
+readme = "README.md"
+description = "This crate exposes bitsliced operations that can be used in reduction functions for rainbow tables."
+license = "MIT OR Apache-2.0"
+keywords = ["bitslice", "rainbow tables", "reduction functions"]
 
 [dependencies]
 wide = "1.1.1"
