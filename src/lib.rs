@@ -3,6 +3,7 @@ use std::{io::Error, io::ErrorKind};
 use wide::u64x8;
 
 pub mod benchmark;
+pub mod transpose;
 
 pub const ALL_ONES: u64x8 = u64x8::splat(0xFFFFFFFFFFFFFFFF);
 pub const ZERO: u64x8 = u64x8::ZERO;
