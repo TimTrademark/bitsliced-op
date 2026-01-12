@@ -1,8 +1,14 @@
-use std::{io::Error, io::ErrorKind};
+use std::{
+    io::{Error, ErrorKind},
+    sync::OnceLock,
+};
 
 use wide::u64x8;
 
+use crate::transpose::transpose_scalar;
+
 pub mod benchmark;
+pub mod transpose;
 
 pub const ALL_ONES: u64x8 = u64x8::splat(0xFFFFFFFFFFFFFFFF);
 pub const ZERO: u64x8 = u64x8::ZERO;
@@ -112,6 +118,30 @@ pub fn des_reduction(h: &[u64x8; 64], i: u64) -> [u64x8; 64] {
 pub fn des_reduction_inline(h: &mut [u64x8; 64], i: u64) {
     bitsliced_add_single_inline(h, i);
     bitsliced_modulo_power_of_two_inline(h, 56).unwrap();
+}
+
+static USE_GFNI: OnceLock<bool> = OnceLock::new();
+
+//transpose 64x64 bit matrix
+//use gfni if the cpu supports it, fallback to scalar if it doesn't
+pub fn transpose_64x64(input: &[u64; 64]) -> [u64; 64] {
+    if *USE_GFNI.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            std::is_x86_feature_detected!("gfni")
+                && std::is_x86_feature_detected!("avx512f")
+                && std::is_x86_feature_detected!("avx512bw")
+                && std::is_x86_feature_detected!("avx512vbmi")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }) {
+        unsafe { crate::transpose::transpose_gfni(input) }
+    } else {
+        transpose_scalar(input)
+    }
 }
 
 #[cfg(test)]
