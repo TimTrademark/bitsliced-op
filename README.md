@@ -52,3 +52,13 @@ let index = 0; //current index in rainbow chain, most likely just your loop coun
 //reduction function does (HASH+INDEX)%MAX_SIZE for every column
 let reduced = des_reduction(H, index);
 ```
+
+Additionally, this crate also provides efficient functions to transpose (rows to columns and vice versa) a 64x64 bit matrix (which is needed to get data in bitsliced form):
+
+```rust
+let mut a = [ZERO; 64];
+a[0] = ALL_ONES;
+
+//first column of 'transposed' is all 1's now
+let transposed = transpose_64x64(&a);
+```

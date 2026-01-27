@@ -1,8 +1,11 @@
 use std::{env, hint::black_box};
 
 use bitsliced_op::{
-    benchmark::benchmark, bitsliced_add, bitsliced_add_inline, bitsliced_modulo_power_of_two,
+    benchmark::benchmark,
+    bitsliced_add, bitsliced_add_inline, bitsliced_modulo_power_of_two,
     bitsliced_modulo_power_of_two_inline,
+    transpose::{transpose_gfni, transpose_scalar},
+    transpose_64x64,
 };
 use wide::u64x8;
 
@@ -61,6 +64,27 @@ fn start_benchmark(benchmark_name: &str) {
 
             benchmark("bitsliced_modulo_inline", 1_000_000, 10000, 64, || {
                 let _ = bitsliced_modulo_power_of_two_inline(&mut a, 56);
+            });
+        }
+        "ts" | "transpose_scalar" => {
+            let transpose_input = [0u64; 64];
+
+            benchmark("transpose_scalar", 1_000_000, 10000, 1, || {
+                let _ = transpose_scalar(&transpose_input);
+            });
+        }
+        "tg" | "transpose_gfni" => {
+            let transpose_input = [0u64; 64];
+
+            benchmark("transpose_gfni", 1_000_000, 10000, 1, || unsafe {
+                let _ = transpose_gfni(&transpose_input);
+            });
+        }
+        "tr" | "transpose" => {
+            let transpose_input = [0u64; 64];
+
+            benchmark("transpose", 1_000_000, 10000, 1, || {
+                let _ = transpose_64x64(&transpose_input);
             });
         }
         _ => {
