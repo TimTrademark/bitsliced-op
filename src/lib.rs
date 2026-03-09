@@ -1,4 +1,8 @@
 use std::{
+    arch::x86_64::{
+        __m512i, _mm512_and_si512, _mm512_or_si512, _mm512_set1_epi64, _mm512_setzero_si512,
+        _mm512_xor_si512,
+    },
     io::{Error, ErrorKind},
     sync::OnceLock,
 };
@@ -75,6 +79,36 @@ fn calc_sum_carry(a: u64x8, b: u64x8, carry: u64x8) -> (u64x8, u64x8) {
     (sum, next_carry)
 }
 
+const M512_ONES: __m512i = unsafe { std::mem::transmute([!0u64; 8]) };
+
+const M512_ZERO: __m512i = unsafe { std::mem::transmute([0u64; 8]) };
+
+pub unsafe fn bitsliced_add_single_inline_avx(a: &mut [__m512i; 64], b: u64) {
+    let mut carry = _mm512_setzero_si512();
+    for i in (0..64).rev() {
+        let shift_right = 63 - i;
+        let current_bit = (b >> shift_right) & 1;
+        let b_i = if current_bit == 1 {
+            M512_ONES
+        } else {
+            M512_ZERO
+        };
+        let res = calc_sum_carry_avx(a[i], b_i, carry);
+        a[i] = res.0;
+        //only set carry if we haven't reached the end yet, we currently ignore overflows
+        carry = res.1;
+    }
+}
+
+unsafe fn calc_sum_carry_avx(a: __m512i, b: __m512i, carry: __m512i) -> (__m512i, __m512i) {
+    let sum = _mm512_xor_si512(_mm512_xor_si512(a, b), carry);
+    let axb = _mm512_xor_si512(a, b);
+    let a_and_b = _mm512_and_si512(a, b);
+    let carry_term = _mm512_and_si512(carry, axb);
+    let next_carry = _mm512_or_si512(a_and_b, carry_term);
+    (sum, next_carry)
+}
+
 //this function only works when calculating the module with a number of the power of two
 //currently only supports a single modulo operation for all integers
 //example: if you want to calculate the modulo with 2^56, pass 56 to k
@@ -107,6 +141,24 @@ pub fn bitsliced_modulo_power_of_two_inline(a: &mut [u64x8; 64], k: usize) -> Re
     Ok(())
 }
 
+pub fn bitsliced_modulo_power_of_two_inline_avx(
+    a: &mut [__m512i; 64],
+    k: usize,
+) -> Result<(), Error> {
+    if k > 64 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "k must be <= 64 for bitsliced modulo",
+        ));
+    }
+    let end: usize = 64 - k;
+    for i in 0..end {
+        a[i] = M512_ZERO
+    }
+
+    Ok(())
+}
+
 //reduction function: (H+I)%MAX_SIZE
 //H=Hash,I=Index in chain,MAX_SIZE=Max size of output in power of 2
 pub fn des_reduction(h: &[u64x8; 64], i: u64) -> [u64x8; 64] {
@@ -118,6 +170,11 @@ pub fn des_reduction(h: &[u64x8; 64], i: u64) -> [u64x8; 64] {
 pub fn des_reduction_inline(h: &mut [u64x8; 64], i: u64) {
     bitsliced_add_single_inline(h, i);
     bitsliced_modulo_power_of_two_inline(h, 56).unwrap();
+}
+
+pub unsafe fn des_reduction_inline_avx(h: &mut [__m512i; 64], i: u64) {
+    unsafe { bitsliced_add_single_inline_avx(h, i) };
+    bitsliced_modulo_power_of_two_inline_avx(h, 56).unwrap();
 }
 
 static USE_GFNI: OnceLock<bool> = OnceLock::new();
