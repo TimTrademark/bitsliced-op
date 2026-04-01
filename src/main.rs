@@ -1,9 +1,9 @@
-use std::{env, hint::black_box};
+use std::{arch::x86_64::_mm512_setzero_si512, env, hint::black_box};
 
 use bitsliced_op::{
     benchmark::benchmark,
-    bitsliced_add, bitsliced_add_inline, bitsliced_modulo_power_of_two,
-    bitsliced_modulo_power_of_two_inline,
+    bitsliced_add, bitsliced_add_inline, bitsliced_add_single_inline_avx,
+    bitsliced_modulo_power_of_two, bitsliced_modulo_power_of_two_inline, des_reduction_inline_avx,
     transpose::{transpose_gfni, transpose_scalar},
     transpose_64x64,
 };
@@ -49,6 +49,32 @@ fn start_benchmark(benchmark_name: &str) {
             benchmark("bitsliced_addition_inline", 1_000_000, 10000, 64, || {
                 bitsliced_add_inline(&mut a, &b);
             });
+        }
+        "baai" | "bitsliced_avx_addition_inline" => {
+            let mut data = [unsafe { _mm512_setzero_si512() }; 64];
+
+            benchmark(
+                "bitsliced_addition_inline",
+                1_000_000,
+                10000,
+                64,
+                || unsafe {
+                    bitsliced_add_single_inline_avx(&mut data, 111);
+                },
+            );
+        }
+        "ravx" | "reduction_avx" => {
+            let mut data = [unsafe { _mm512_setzero_si512() }; 64];
+
+            benchmark(
+                "bitsliced_addition_inline",
+                1_000_000,
+                10000,
+                64,
+                || unsafe {
+                    des_reduction_inline_avx(&mut data, 111);
+                },
+            );
         }
         "bm" | "bitsliced_modulo" => {
             let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);

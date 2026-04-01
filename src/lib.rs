@@ -1,7 +1,7 @@
 use std::{
     arch::x86_64::{
         __m512i, _mm512_and_si512, _mm512_or_si512, _mm512_set1_epi64, _mm512_setzero_si512,
-        _mm512_xor_si512,
+        _mm512_ternarylogic_epi32, _mm512_test_epi64_mask, _mm512_xor_si512,
     },
     io::{Error, ErrorKind},
     sync::OnceLock,
@@ -84,29 +84,29 @@ const M512_ONES: __m512i = unsafe { std::mem::transmute([!0u64; 8]) };
 const M512_ZERO: __m512i = unsafe { std::mem::transmute([0u64; 8]) };
 
 pub unsafe fn bitsliced_add_single_inline_avx(a: &mut [__m512i; 64], b: u64) {
-    let mut carry = _mm512_setzero_si512();
+    let mut carry = M512_ZERO;
+    let max_bit_pos = 64 - (b.leading_zeros() as usize);
     for i in (0..64).rev() {
-        let shift_right = 63 - i;
-        let current_bit = (b >> shift_right) & 1;
-        let b_i = if current_bit == 1 {
+        let bit_index = 63 - i;
+        //break early to save cpu cycles
+        if bit_index >= max_bit_pos {
+            if _mm512_test_epi64_mask(carry, carry) == 0 {
+                break;
+            }
+        }
+
+        let current_bit = if ((b >> bit_index) & 1) == 1 {
             M512_ONES
         } else {
             M512_ZERO
         };
-        let res = calc_sum_carry_avx(a[i], b_i, carry);
-        a[i] = res.0;
-        //only set carry if we haven't reached the end yet, we currently ignore overflows
-        carry = res.1;
-    }
-}
 
-unsafe fn calc_sum_carry_avx(a: __m512i, b: __m512i, carry: __m512i) -> (__m512i, __m512i) {
-    let sum = _mm512_xor_si512(_mm512_xor_si512(a, b), carry);
-    let axb = _mm512_xor_si512(a, b);
-    let a_and_b = _mm512_and_si512(a, b);
-    let carry_term = _mm512_and_si512(carry, axb);
-    let next_carry = _mm512_or_si512(a_and_b, carry_term);
-    (sum, next_carry)
+        let a_orig = a[i];
+
+        a[i] = _mm512_ternarylogic_epi32(a_orig, current_bit, carry, 0x96);
+
+        carry = _mm512_ternarylogic_epi32(a_orig, current_bit, carry, 0xE8);
+    }
 }
 
 //this function only works when calculating the module with a number of the power of two
@@ -203,6 +203,8 @@ pub fn transpose_64x64(input: &[u64; 64]) -> [u64; 64] {
 
 #[cfg(test)]
 mod tests {
+    use std::arch::x86_64::_mm512_storeu_si512;
+
     use super::*;
 
     #[test]
@@ -254,6 +256,22 @@ mod tests {
         assert_eq!(a[62], ALL_ONES);
         for i in 0..62 {
             assert_eq!(a[i], ZERO);
+        }
+    }
+
+    #[test]
+    fn test_add_single_inline_avx_works() {
+        let mut a = [unsafe { _mm512_setzero_si512() }; 64];
+        a[63] = unsafe { std::mem::transmute([!0u64; 8]) };
+        unsafe { bitsliced_add_single_inline_avx(&mut a, 1) };
+        let mut arr = [0u64; 8];
+        unsafe { _mm512_storeu_si512(arr.as_mut_ptr() as *mut _, a[63]) };
+        assert_eq!(arr[0], 0);
+        unsafe { _mm512_storeu_si512(arr.as_mut_ptr() as *mut _, a[62]) };
+        assert_eq!(arr[0], 0xFFFFFFFFFFFFFFFF);
+        for i in 0..62 {
+            unsafe { _mm512_storeu_si512(arr.as_mut_ptr() as *mut _, a[i]) };
+            assert_eq!(arr[0], 0);
         }
     }
 
