@@ -2,8 +2,9 @@ use std::{arch::x86_64::_mm512_setzero_si512, env, hint::black_box};
 
 use bitsliced_op::{
     benchmark::benchmark,
-    bitsliced_add, bitsliced_add_inline, bitsliced_add_single_inline_avx,
-    bitsliced_modulo_power_of_two, bitsliced_modulo_power_of_two_inline, des_reduction_inline_avx,
+    bitsliced_add, bitsliced_add_inline, bitsliced_add_single_inline_avx_512,
+    bitsliced_modulo_power_of_two, bitsliced_modulo_power_of_two_inline,
+    des_reduction_inline_avx_512,
     transpose::{transpose_gfni, transpose_scalar},
     transpose_64x64,
 };
@@ -59,7 +60,7 @@ fn start_benchmark(benchmark_name: &str) {
                 10000,
                 64,
                 || unsafe {
-                    bitsliced_add_single_inline_avx(&mut data, 111);
+                    bitsliced_add_single_inline_avx_512(&mut data, 111);
                 },
             );
         }
@@ -72,7 +73,7 @@ fn start_benchmark(benchmark_name: &str) {
                 10000,
                 64,
                 || unsafe {
-                    des_reduction_inline_avx(&mut data, 111);
+                    des_reduction_inline_avx_512(&mut data, 111);
                 },
             );
         }
