@@ -1,6 +1,6 @@
 [package]
 name = "bitsliced-op"
-version = "0.6.1"
+version = "0.8.0"
 edition = "2024"
 authors = ["TimTrademark <https://github.com/TimTrademark>"]
 repository = "https://github.com/TimTrademark/bitsliced-op"
