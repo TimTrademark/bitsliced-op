@@ -11,7 +11,7 @@ use std::{
 
 use wide::u64x8;
 
-use crate::transpose::transpose_scalar;
+use crate::transpose::{transpose_scalar, transpose_scalar_inline};
 
 pub mod benchmark;
 pub mod transpose;
@@ -259,6 +259,11 @@ pub fn transpose_64x64(input: &[u64; 64]) -> [u64; 64] {
     } else {
         transpose_scalar(input)
     }
+}
+
+//currently only supports scalar
+pub fn transpose_64x64_inline(input: &mut [u64; 64]) {
+    transpose_scalar_inline(input);
 }
 
 #[cfg(test)]

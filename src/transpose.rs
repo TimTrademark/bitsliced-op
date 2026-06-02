@@ -1,25 +1,133 @@
 use core::arch::x86_64::*;
 
+/*
+original:
+A7A6A5A4A3A2A1A0
+B7B6B5B4B3B2B1B0
+...
+
+becomes:
+A7B7C7D7E7F7G7H7
+A6B6C6D6E6F6G6H6
+...
+
+*/
+
+const MASK_32: u64 = 0x00000000FFFFFFFF;
+const MASK_16: u64 = 0x0000FFFF0000FFFF;
+const MASK_8: u64 = 0x00FF00FF00FF00FF;
+const MASK_4: u64 = 0x0F0F0F0F0F0F0F0F;
+const MASK_2: u64 = 0x3333333333333333;
+const MASK_1: u64 = 0x5555555555555555;
+
 pub fn transpose_scalar(input: &[u64; 64]) -> [u64; 64] {
-    let mut out = *input;
-    let mut j = 32;
-    let mut mask: u64 = 0x00000000FFFFFFFF;
-
-    for _ in 0..6 {
-        for k in 0..64 {
-            if (k & j) == 0 {
-                let x = out[k];
-                let y = out[k | j];
-
-                let t = (x ^ (y >> j)) & mask;
-                out[k] = x ^ t;
-                out[k | j] = y ^ (t << j);
-            }
+    let mut result = input.clone();
+    unsafe {
+        //top right to bottom left and vice-versa
+        //swap 32x32
+        swap(result.as_mut_ptr(), 32, MASK_32);
+        //swap 16x16
+        swap(result[0..32].as_mut_ptr(), 16, MASK_16);
+        swap(result[32..64].as_mut_ptr(), 16, MASK_16);
+        //swap 8x8
+        swap(result[0..16].as_mut_ptr(), 8, MASK_8);
+        swap(result[16..32].as_mut_ptr(), 8, MASK_8);
+        swap(result[32..48].as_mut_ptr(), 8, MASK_8);
+        swap(result[48..64].as_mut_ptr(), 8, MASK_8);
+        //swap 4x4
+        swap(result[0..8].as_mut_ptr(), 4, MASK_4);
+        swap(result[8..16].as_mut_ptr(), 4, MASK_4);
+        swap(result[16..24].as_mut_ptr(), 4, MASK_4);
+        swap(result[24..32].as_mut_ptr(), 4, MASK_4);
+        swap(result[32..40].as_mut_ptr(), 4, MASK_4);
+        swap(result[40..48].as_mut_ptr(), 4, MASK_4);
+        swap(result[48..56].as_mut_ptr(), 4, MASK_4);
+        swap(result[56..64].as_mut_ptr(), 4, MASK_4);
+        //swap 2x2
+        swap(result[0..4].as_mut_ptr(), 2, MASK_2);
+        swap(result[4..8].as_mut_ptr(), 2, MASK_2);
+        swap(result[8..12].as_mut_ptr(), 2, MASK_2);
+        swap(result[12..16].as_mut_ptr(), 2, MASK_2);
+        swap(result[16..20].as_mut_ptr(), 2, MASK_2);
+        swap(result[20..24].as_mut_ptr(), 2, MASK_2);
+        swap(result[24..28].as_mut_ptr(), 2, MASK_2);
+        swap(result[28..32].as_mut_ptr(), 2, MASK_2);
+        swap(result[32..36].as_mut_ptr(), 2, MASK_2);
+        swap(result[36..40].as_mut_ptr(), 2, MASK_2);
+        swap(result[40..44].as_mut_ptr(), 2, MASK_2);
+        swap(result[44..48].as_mut_ptr(), 2, MASK_2);
+        swap(result[48..52].as_mut_ptr(), 2, MASK_2);
+        swap(result[52..56].as_mut_ptr(), 2, MASK_2);
+        swap(result[56..60].as_mut_ptr(), 2, MASK_2);
+        swap(result[60..64].as_mut_ptr(), 2, MASK_2);
+        //swap 1x1
+        for i in 0..32 {
+            let offset = i * 2;
+            swap(result[offset..offset + 2].as_mut_ptr(), 1, MASK_1);
         }
-        j >>= 1;
-        mask ^= mask << j;
     }
-    out
+    result
+}
+
+pub fn transpose_scalar_inline(input: &mut [u64; 64]) {
+    let mut result = input;
+    unsafe {
+        //top right to bottom left and vice-versa
+        //swap 32x32
+        swap(result.as_mut_ptr(), 32, MASK_32);
+        //swap 16x16
+        swap(result[0..32].as_mut_ptr(), 16, MASK_16);
+        swap(result[32..64].as_mut_ptr(), 16, MASK_16);
+        //swap 8x8
+        swap(result[0..16].as_mut_ptr(), 8, MASK_8);
+        swap(result[16..32].as_mut_ptr(), 8, MASK_8);
+        swap(result[32..48].as_mut_ptr(), 8, MASK_8);
+        swap(result[48..64].as_mut_ptr(), 8, MASK_8);
+        //swap 4x4
+        swap(result[0..8].as_mut_ptr(), 4, MASK_4);
+        swap(result[8..16].as_mut_ptr(), 4, MASK_4);
+        swap(result[16..24].as_mut_ptr(), 4, MASK_4);
+        swap(result[24..32].as_mut_ptr(), 4, MASK_4);
+        swap(result[32..40].as_mut_ptr(), 4, MASK_4);
+        swap(result[40..48].as_mut_ptr(), 4, MASK_4);
+        swap(result[48..56].as_mut_ptr(), 4, MASK_4);
+        swap(result[56..64].as_mut_ptr(), 4, MASK_4);
+        //swap 2x2
+        swap(result[0..4].as_mut_ptr(), 2, MASK_2);
+        swap(result[4..8].as_mut_ptr(), 2, MASK_2);
+        swap(result[8..12].as_mut_ptr(), 2, MASK_2);
+        swap(result[12..16].as_mut_ptr(), 2, MASK_2);
+        swap(result[16..20].as_mut_ptr(), 2, MASK_2);
+        swap(result[20..24].as_mut_ptr(), 2, MASK_2);
+        swap(result[24..28].as_mut_ptr(), 2, MASK_2);
+        swap(result[28..32].as_mut_ptr(), 2, MASK_2);
+        swap(result[32..36].as_mut_ptr(), 2, MASK_2);
+        swap(result[36..40].as_mut_ptr(), 2, MASK_2);
+        swap(result[40..44].as_mut_ptr(), 2, MASK_2);
+        swap(result[44..48].as_mut_ptr(), 2, MASK_2);
+        swap(result[48..52].as_mut_ptr(), 2, MASK_2);
+        swap(result[52..56].as_mut_ptr(), 2, MASK_2);
+        swap(result[56..60].as_mut_ptr(), 2, MASK_2);
+        swap(result[60..64].as_mut_ptr(), 2, MASK_2);
+        //swap 1x1
+        for i in 0..32 {
+            let offset = i * 2;
+            swap(result[offset..offset + 2].as_mut_ptr(), 1, MASK_1);
+        }
+    }
+}
+
+//TODO: implement in-place version of transpose_scalar
+#[inline(always)]
+unsafe fn swap(input: *mut u64, stage: usize, mask: u64) {
+    for i in 0..stage {
+        let a = input.add(i);
+        let b = input.add(i + stage);
+
+        let t = (*a ^ (*b >> stage)) & mask;
+        *a ^= t;
+        *b ^= t << stage;
+    }
 }
 
 #[target_feature(enable = "avx512f,gfni,avx512vbmi,avx512bw")]
@@ -227,6 +335,8 @@ pub fn print_bit_matrix(matrix: &[u64]) {
 
 #[cfg(test)]
 mod tests {
+    use std::{assert_eq, mem::transmute};
+
     use super::*;
 
     unsafe fn m512i_eq(a: __m512i, b: __m512i) -> bool {
@@ -242,19 +352,38 @@ mod tests {
         let mut input = [0u64; 64];
         input[0] = 0xFFFFFFFFFFFFFFF0;
         input[1] = 0xFFFFFFFFFFFFFFF0;
+        input[63] = 0xFFFFFFFFFFFFFFF0;
 
         let transposed = transpose_scalar(&input);
         print_bit_matrix(&transposed);
         for i in 0..60 {
             assert_eq!(
                 transposed[i],
-                0b1100000000000000000000000000000000000000000000000000000000000000
+                0b1100000000000000000000000000000000000000000000000000000000000001
             );
         }
         assert_eq!(transposed[60], 0);
         assert_eq!(transposed[61], 0);
         assert_eq!(transposed[62], 0);
         assert_eq!(transposed[63], 0);
+        let mut input = [0u64; 64];
+        input[0] = 0xF0000000000000FF;
+        input[1] = 0xF0000000000000FF;
+
+        let transposed = transpose_scalar(&input);
+        print_bit_matrix(&transposed);
+        for i in 0..4 {
+            assert_eq!(
+                transposed[i],
+                0b1100000000000000000000000000000000000000000000000000000000000000
+            );
+        }
+        for i in 60..64 {
+            assert_eq!(
+                transposed[i],
+                0b1100000000000000000000000000000000000000000000000000000000000000
+            );
+        }
     }
 
     #[test]
