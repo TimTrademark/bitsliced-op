@@ -5,7 +5,7 @@ use bitsliced_op::{
     bitsliced_add, bitsliced_add_inline, bitsliced_add_single_inline_avx_512,
     bitsliced_modulo_power_of_two, bitsliced_modulo_power_of_two_inline,
     des_reduction_inline_avx_512,
-    transpose::{transpose_gfni, transpose_scalar},
+    transpose::{transpose_gfni, transpose_scalar, transpose_scalar_inline},
     transpose_64x64,
 };
 use wide::u64x8;
@@ -94,12 +94,22 @@ fn start_benchmark(benchmark_name: &str) {
             });
         }
         "ts" | "transpose_scalar" => {
-            let transpose_input = [0u64; 64];
+            let mut transpose_input = [0u64; 64];
 
             benchmark("transpose_scalar", 1_000_000, 10000, 1, || {
-                let _ = transpose_scalar(&transpose_input);
+                let a = transpose_scalar(&transpose_input);
+                std::hint::black_box(a);
             });
         }
+        "tsi" | "transpose_scalar_inline" => {
+            let mut transpose_input = [0u64; 64];
+
+            benchmark("transpose_scalar_inline", 1_000_000, 10000, 1, || {
+                let a = transpose_scalar_inline(&mut transpose_input);
+                std::hint::black_box(a);
+            });
+        }
+
         "tg" | "transpose_gfni" => {
             let transpose_input = [0u64; 64];
 
