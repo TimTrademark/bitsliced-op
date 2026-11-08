@@ -14,5 +14,5 @@ exclude = [
 ]
 
 [dependencies]
-wide = "1.1.1"
+
 

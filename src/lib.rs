@@ -1,85 +1,17 @@
 use std::{
     arch::x86_64::{
-        __m256i, __m512i, _mm256_and_si256, _mm256_or_si256, _mm256_ternarylogic_epi32,
-        _mm256_test_epi64_mask, _mm256_testz_si256, _mm256_xor_si256, _mm512_and_si512,
-        _mm512_or_si512, _mm512_set1_epi64, _mm512_setzero_si512, _mm512_ternarylogic_epi32,
-        _mm512_test_epi64_mask, _mm512_xor_si512,
+        __m256i, __m512i, _mm256_and_si256, _mm256_cmpgt_epi64, _mm256_or_si256, _mm256_set_epi64x,
+        _mm256_set1_epi64x, _mm256_setzero_si256, _mm256_slli_epi64, _mm256_srli_epi64,
+        _mm256_testz_si256, _mm256_xor_si256, _mm512_ternarylogic_epi32, _mm512_test_epi64_mask,
     },
     io::{Error, ErrorKind},
     sync::OnceLock,
 };
 
-use wide::u64x8;
-
 use crate::transpose::{transpose_scalar, transpose_scalar_inline};
 
 pub mod benchmark;
 pub mod transpose;
-
-pub const ALL_ONES: u64x8 = u64x8::splat(0xFFFFFFFFFFFFFFFF);
-pub const ZERO: u64x8 = u64x8::ZERO;
-
-pub fn splat(n: u64) -> u64x8 {
-    u64x8::splat(n)
-}
-
-//expects the input to be in bitsliced form e.g integers are columns, not rows
-//last row is LSB
-pub fn bitsliced_add(a: &[u64x8; 64], b: &[u64x8; 64]) -> [u64x8; 64] {
-    let mut carry = u64x8::ZERO;
-    let mut sum = [u64x8::ZERO; 64];
-    for i in (0..64).rev() {
-        let res = calc_sum_carry(a[i], b[i], carry);
-        sum[i] = res.0;
-        //only set carry if we haven't reached the end yet, we currently ignore overflows
-        carry = res.1;
-    }
-    sum
-}
-
-pub fn bitsliced_add_single(a: &[u64x8; 64], b: u64) -> [u64x8; 64] {
-    let mut carry = u64x8::ZERO;
-    let mut sum = [u64x8::ZERO; 64];
-    for i in (0..64).rev() {
-        let shift_right = 63 - i;
-        let current_bit = (b >> shift_right) & 1;
-        let b_i = if current_bit == 1 { ALL_ONES } else { ZERO };
-        let res = calc_sum_carry(a[i], b_i, carry);
-        sum[i] = res.0;
-        //only set carry if we haven't reached the end yet, we currently ignore overflows
-        carry = res.1;
-    }
-    sum
-}
-
-pub fn bitsliced_add_inline(a: &mut [u64x8; 64], b: &[u64x8; 64]) {
-    let mut carry = u64x8::ZERO;
-    for i in (0..64).rev() {
-        let res = calc_sum_carry(a[i], b[i], carry);
-        a[i] = res.0;
-        //only set carry if we haven't reached the end yet, we currently ignore overflows
-        carry = res.1;
-    }
-}
-
-pub fn bitsliced_add_single_inline(a: &mut [u64x8; 64], b: u64) {
-    let mut carry = u64x8::ZERO;
-    for i in (0..64).rev() {
-        let shift_right = 63 - i;
-        let current_bit = (b >> shift_right) & 1;
-        let b_i = if current_bit == 1 { ALL_ONES } else { ZERO };
-        let res = calc_sum_carry(a[i], b_i, carry);
-        a[i] = res.0;
-        //only set carry if we haven't reached the end yet, we currently ignore overflows
-        carry = res.1;
-    }
-}
-
-fn calc_sum_carry(a: u64x8, b: u64x8, carry: u64x8) -> (u64x8, u64x8) {
-    let sum = a ^ b ^ carry;
-    let next_carry = (a & b) | (carry & (a ^ b));
-    (sum, next_carry)
-}
 
 const M512_ONES: __m512i = unsafe { std::mem::transmute([!0u64; 8]) };
 const M512_ZERO: __m512i = unsafe { std::mem::transmute([0u64; 8]) };
@@ -111,70 +43,91 @@ pub unsafe fn bitsliced_add_single_inline_avx_512(a: &mut [__m512i; 64], b: u64)
     }
 }
 
-const M2_ONES: __m256i = unsafe { std::mem::transmute([!0u64; 4]) };
 const M2_ZERO: __m256i = unsafe { std::mem::transmute([0u64; 4]) };
 
 #[target_feature(enable = "avx2")]
-pub unsafe fn bitsliced_add_single_inline_avx_2(a: &mut [__m256i; 64], b: u64) {
+#[inline]
+unsafe fn bitsliced_add_single_inline_avx_2(a: &mut [__m256i; 64], b: u64) {
     let mut carry = M2_ZERO;
-    let max_bit_pos = 64 - (b.leading_zeros() as usize);
-    for i in (0..64).rev() {
-        let bit_index = 63 - i;
-        //break early to save cpu cycles
-        if bit_index >= max_bit_pos {
-            if _mm256_testz_si256(carry, carry) != 0 {
-                break;
-            }
-        }
 
-        let current_bit = if ((b >> bit_index) & 1) == 1 {
-            M2_ONES
-        } else {
-            M2_ZERO
-        };
+    // highest bit of b that's set, clamped to min 40
+    let max_bit_pos = (64 - b.leading_zeros() as usize).min(40);
+    // smallest i we need the full adder for
+    let full_adder_floor = 64 - max_bit_pos;
+
+    // full adder
+    for i in (full_adder_floor..64).rev() {
+        let bit_index = 63 - i;
+        let bit = (b >> bit_index) & 1;
+        let current_bit = _mm256_set1_epi64x((bit as i64).wrapping_neg());
 
         let a_orig = a[i];
-
         let xor_ab = _mm256_xor_si256(a_orig, current_bit);
         let and_ab = _mm256_and_si256(a_orig, current_bit);
         a[i] = _mm256_xor_si256(xor_ab, carry);
-
         carry = _mm256_or_si256(and_ab, _mm256_and_si256(carry, xor_ab));
+    }
+
+    // half adder (all subsequent bits in b are 0, only half adder is needed)
+    for i in (24..full_adder_floor).rev() {
+        if _mm256_testz_si256(carry, carry) != 0 {
+            break;
+        }
+        let a_orig = a[i];
+        a[i] = _mm256_xor_si256(a_orig, carry);
+        carry = _mm256_and_si256(a_orig, carry);
+    }
+}
+
+/// N = number of groups
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn bitsliced_add_grouped_avx_2<const N: usize>(a: &mut [__m256i; 64], b: &[u64; N]) {
+    const { assert!(N == 1 || N == 2 || N == 4) };
+
+    // One 64-bit element per 64 columns; groups are replicated across their elements.
+    let bv = match N {
+        1 => _mm256_set1_epi64x(b[0] as i64),
+        2 => _mm256_set_epi64x(b[1] as i64, b[1] as i64, b[0] as i64, b[0] as i64),
+        _ => _mm256_set_epi64x(b[3] as i64, b[2] as i64, b[1] as i64, b[0] as i64),
+    };
+
+    // Width is set by the largest addend; smaller ones just contribute zero bits above their MSB.
+    let b_or = b.iter().fold(0u64, |x, &y| x | y);
+    let max_bit_pos = (64 - b_or.leading_zeros() as usize).min(40);
+    let full_adder_floor = 64 - max_bit_pos;
+
+    let zero = _mm256_setzero_si256();
+    let mut carry = zero;
+    let mut cur = bv;
+
+    // full adder, bit 0 first (i = 63)
+    for i in (full_adder_floor..64).rev() {
+        // lowest bit of each element -> top bit -> all-ones/all-zeros mask
+        let current_bit = _mm256_cmpgt_epi64(zero, _mm256_slli_epi64::<63>(cur));
+        cur = _mm256_srli_epi64::<1>(cur);
+
+        let a_orig = a[i];
+        let xor_ab = _mm256_xor_si256(a_orig, current_bit);
+        let and_ab = _mm256_and_si256(a_orig, current_bit);
+        a[i] = _mm256_xor_si256(xor_ab, carry);
+        carry = _mm256_or_si256(and_ab, _mm256_and_si256(carry, xor_ab));
+    }
+
+    // half adder with early exit
+    for i in (24..full_adder_floor).rev() {
+        if _mm256_testz_si256(carry, carry) != 0 {
+            break;
+        }
+        let a_orig = a[i];
+        a[i] = _mm256_xor_si256(a_orig, carry);
+        carry = _mm256_and_si256(a_orig, carry);
     }
 }
 
 //this function only works when calculating the module with a number of the power of two
 //currently only supports a single modulo operation for all integers
 //example: if you want to calculate the modulo with 2^56, pass 56 to k
-pub fn bitsliced_modulo_power_of_two(a: &[u64x8; 64], k: usize) -> Result<[u64x8; 64], Error> {
-    if k > 64 {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "k must be <= 64 for bitsliced modulo",
-        ));
-    }
-    let mut out = [u64x8::splat(0); 64];
-    let start: usize = 64 - k;
-    out[start..].copy_from_slice(&a[start..]);
-
-    Ok(out)
-}
-
-pub fn bitsliced_modulo_power_of_two_inline(a: &mut [u64x8; 64], k: usize) -> Result<(), Error> {
-    if k > 64 {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "k must be <= 64 for bitsliced modulo",
-        ));
-    }
-    let end: usize = 64 - k;
-    for i in 0..end {
-        a[i] = u64x8::splat(0);
-    }
-
-    Ok(())
-}
-
 #[target_feature(enable = "avx512f,avx512vl,avx512bw")]
 pub fn bitsliced_modulo_power_of_two_inline_avx_512(
     a: &mut [__m512i; 64],
@@ -214,17 +167,6 @@ pub fn bitsliced_modulo_power_of_two_inline_avx_2(
 
 //reduction function: (H+I)%MAX_SIZE
 //H=Hash,I=Index in chain,MAX_SIZE=Max size of output in power of 2
-pub fn des_reduction(h: &[u64x8; 64], i: u64) -> [u64x8; 64] {
-    let mut sum = bitsliced_add_single(h, i);
-    bitsliced_modulo_power_of_two_inline(&mut sum, 56).unwrap();
-    sum
-}
-
-pub fn des_reduction_inline(h: &mut [u64x8; 64], i: u64) {
-    bitsliced_add_single_inline(h, i);
-    bitsliced_modulo_power_of_two_inline(h, 56).unwrap();
-}
-
 #[target_feature(enable = "avx512f,avx512vl,avx512bw")]
 pub unsafe fn des_reduction_inline_avx_512(h: &mut [__m512i; 64], i: u64) {
     unsafe { bitsliced_add_single_inline_avx_512(h, i) };
@@ -268,61 +210,11 @@ pub fn transpose_64x64_inline(input: &mut [u64; 64]) {
 
 #[cfg(test)]
 mod tests {
-    use std::arch::x86_64::{_mm256_setzero_si256, _mm256_storeu_si256, _mm512_storeu_si512};
+    use std::arch::x86_64::{
+        _mm256_setzero_si256, _mm256_storeu_si256, _mm512_setzero_si512, _mm512_storeu_si512,
+    };
 
     use super::*;
-
-    #[test]
-    fn test_add_works() {
-        let mut a = [ZERO; 64];
-        a[63] = ALL_ONES;
-        let mut b = [ZERO; 64];
-        b[63] = ALL_ONES;
-        let sum = bitsliced_add(&a, &b);
-        assert_eq!(sum[63], ZERO);
-        assert_eq!(sum[62], ALL_ONES);
-        for i in 0..62 {
-            assert_eq!(sum[i], ZERO);
-        }
-    }
-
-    #[test]
-    fn test_add_single_works() {
-        let mut a = [ZERO; 64];
-        a[63] = ALL_ONES;
-        let sum = bitsliced_add_single(&a, 1);
-        assert_eq!(sum[63], ZERO);
-        assert_eq!(sum[62], ALL_ONES);
-        for i in 0..62 {
-            assert_eq!(sum[i], ZERO);
-        }
-    }
-
-    #[test]
-    fn test_add_inline_works() {
-        let mut a = [ZERO; 64];
-        a[63] = ALL_ONES;
-        let mut b = [ZERO; 64];
-        b[63] = ALL_ONES;
-        bitsliced_add_inline(&mut a, &b);
-        assert_eq!(a[63], ZERO);
-        assert_eq!(a[62], ALL_ONES);
-        for i in 0..62 {
-            assert_eq!(a[i], ZERO);
-        }
-    }
-
-    #[test]
-    fn test_add_single_inline_works() {
-        let mut a = [ZERO; 64];
-        a[63] = ALL_ONES;
-        bitsliced_add_single_inline(&mut a, 1);
-        assert_eq!(a[63], ZERO);
-        assert_eq!(a[62], ALL_ONES);
-        for i in 0..62 {
-            assert_eq!(a[i], ZERO);
-        }
-    }
 
     #[test]
     fn test_add_single_inline_avx_512_works() {
@@ -356,29 +248,78 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_modulo_works() {
-        let a = [ALL_ONES; 64];
-        let res = bitsliced_modulo_power_of_two(&a, 56).unwrap();
-        for i in 0..8 {
-            assert_eq!(res[i], ZERO);
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn transpose_avx_2<const T: usize, const L: usize>(
+        blocks: &[[u64; 256]; T],
+    ) -> [__m256i; L] {
+        let mut outputs = [unsafe { core::mem::zeroed() }; L];
+
+        for t in 0..T {
+            let t0 = transpose_64x64(&blocks[t][0..64].try_into().unwrap());
+            let t1 = transpose_64x64(&blocks[t][64..128].try_into().unwrap());
+            let t2 = transpose_64x64(&blocks[t][128..192].try_into().unwrap());
+            let t3 = transpose_64x64(&blocks[t][192..256].try_into().unwrap());
+
+            let start = t * 64;
+            let end = start + 64;
+            for i in start..end {
+                outputs[i] =
+                    _mm256_set_epi64x(t0[i] as i64, t1[i] as i64, t2[i] as i64, t3[i] as i64);
+            }
         }
-        for i in 8..64 {
-            assert_eq!(res[i], ALL_ONES);
+
+        outputs
+    }
+
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn transpose_back_avx_2<const T: usize, const L: usize>(
+        outputs_simd: &[__m256i; L],
+    ) -> [[u64; 256]; T] {
+        let mut blocks_transposed = [[0u64; 256]; T];
+
+        for t in 0..T {
+            for bit_idx in 0..64 {
+                let reg = outputs_simd[bit_idx];
+
+                let mut lanes = [0u64; 4];
+                unsafe { _mm256_storeu_si256(lanes.as_mut_ptr() as *mut _, reg) };
+
+                // lanes[3-b] recovers t0..t3 given t0 is stored at the MSB
+                blocks_transposed[t][bit_idx] = lanes[3];
+                blocks_transposed[t][64 + bit_idx] = lanes[2];
+                blocks_transposed[t][128 + bit_idx] = lanes[1];
+                blocks_transposed[t][192 + bit_idx] = lanes[0];
+            }
+
+            for b in 0..4 {
+                let block: &mut [u64; 64] = (&mut blocks_transposed[t][b * 64..b * 64 + 64])
+                    .try_into()
+                    .unwrap();
+                transpose_64x64_inline(block);
+            }
         }
+
+        blocks_transposed
     }
 
     #[test]
-    fn test_modulo_inline_works() {
-        let mut a = [ALL_ONES; 64];
-        let _ = bitsliced_modulo_power_of_two_inline(&mut a, 56).unwrap();
-        for i in 0..8 {
-            assert_eq!(a[i], ZERO);
+    fn test_add_grouped_avx_2_works() {
+        let mut a = [[0u64; 256]];
+        for i in 0..128 {
+            a[0][i] = 1;
         }
-        for i in 8..64 {
-            assert_eq!(a[i], ALL_ONES);
+        let mut transposed = unsafe { transpose_avx_2::<1, 64>(&a) };
+        unsafe { bitsliced_add_grouped_avx_2(&mut transposed, &[1u64; 2]) };
+        let back = unsafe { transpose_back_avx_2::<1, 64>(&transposed) };
+        for i in 0..128 {
+            assert_eq!(back[0][i], 2);
+        }
+        for i in 128..256 {
+            assert_eq!(back[0][i], 1);
         }
     }
+
+    const M2_ONES: __m256i = unsafe { std::mem::transmute([!0u64; 4]) };
 
     #[test]
     fn test_modulo_inline_avx_2_works() {

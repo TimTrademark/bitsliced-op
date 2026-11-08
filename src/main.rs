@@ -2,13 +2,10 @@ use std::{arch::x86_64::_mm512_setzero_si512, env, hint::black_box};
 
 use bitsliced_op::{
     benchmark::benchmark,
-    bitsliced_add, bitsliced_add_inline, bitsliced_add_single_inline_avx_512,
-    bitsliced_modulo_power_of_two, bitsliced_modulo_power_of_two_inline,
-    des_reduction_inline_avx_512,
+    bitsliced_add_single_inline_avx_512, des_reduction_inline_avx_512,
     transpose::{transpose_gfni, transpose_scalar, transpose_scalar_inline},
     transpose_64x64,
 };
-use wide::u64x8;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -27,30 +24,7 @@ fn start_benchmark(benchmark_name: &str) {
                 black_box(result);
             });
         }
-        "ba" | "bitsliced_addition" => {
-            let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);
-            let zero = u64x8::ZERO;
-            let mut a = [zero; 64];
-            a[63] = all_ones;
-            let mut b = [zero; 64];
-            b[63] = all_ones;
 
-            benchmark("bitsliced_addition", 1_000_000, 10000, 64, || {
-                let _ = bitsliced_add(&a, &b);
-            });
-        }
-        "bai" | "bitsliced_addition_inline" => {
-            let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);
-            let zero = u64x8::ZERO;
-            let mut a = [zero; 64];
-            a[63] = all_ones;
-            let mut b = [zero; 64];
-            b[63] = all_ones;
-
-            benchmark("bitsliced_addition_inline", 1_000_000, 10000, 64, || {
-                bitsliced_add_inline(&mut a, &b);
-            });
-        }
         "baai" | "bitsliced_avx_addition_inline" => {
             let mut data = [unsafe { _mm512_setzero_si512() }; 64];
 
@@ -77,22 +51,7 @@ fn start_benchmark(benchmark_name: &str) {
                 },
             );
         }
-        "bm" | "bitsliced_modulo" => {
-            let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);
-            let a = [all_ones; 64];
 
-            benchmark("bitsliced_modulo", 1_000_000, 10000, 64, || {
-                let _ = bitsliced_modulo_power_of_two(&a, 56);
-            });
-        }
-        "bmi" | "bitsliced_modulo_inline" => {
-            let all_ones = u64x8::splat(0xFFFFFFFFFFFFFFFF);
-            let mut a = [all_ones; 64];
-
-            benchmark("bitsliced_modulo_inline", 1_000_000, 10000, 64, || {
-                let _ = bitsliced_modulo_power_of_two_inline(&mut a, 56);
-            });
-        }
         "ts" | "transpose_scalar" => {
             let mut transpose_input = [0u64; 64];
 
