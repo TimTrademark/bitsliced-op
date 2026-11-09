@@ -13,6 +13,26 @@ use crate::transpose::{transpose_scalar, transpose_scalar_inline};
 pub mod benchmark;
 pub mod transpose;
 
+//reduction function: (H+I)%MAX_SIZE
+//H=Hash,I=Index in chain,MAX_SIZE=Max size of output in power of 2
+#[target_feature(enable = "avx512f,avx512vl,avx512bw")]
+pub unsafe fn des_reduction_inline_avx_512(h: &mut [__m512i; 64], i: u64) {
+    unsafe { bitsliced_add_single_inline_avx_512(h, i) };
+    bitsliced_modulo_power_of_two_inline_avx_512(h, 56).unwrap();
+}
+
+#[target_feature(enable = "avx2")]
+pub unsafe fn des_reduction_inline_avx_2(h: &mut [__m256i; 64], i: u64) {
+    unsafe { bitsliced_add_single_inline_avx_2(h, i) };
+    bitsliced_modulo_power_of_two_inline_avx_2(h, 56).unwrap();
+}
+
+#[target_feature(enable = "avx2")]
+pub unsafe fn des_reduction_grouped_avx_2<const N: usize>(h: &mut [__m256i; 64], i: &[u64; N]) {
+    unsafe { bitsliced_add_grouped_avx_2::<N>(h, i) };
+    bitsliced_modulo_power_of_two_inline_avx_2(h, 56).unwrap();
+}
+
 const M512_ONES: __m512i = unsafe { std::mem::transmute([!0u64; 8]) };
 const M512_ZERO: __m512i = unsafe { std::mem::transmute([0u64; 8]) };
 
@@ -69,7 +89,7 @@ unsafe fn bitsliced_add_single_inline_avx_2(a: &mut [__m256i; 64], b: u64) {
     }
 
     // half adder (all subsequent bits in b are 0, only half adder is needed)
-    for i in (24..full_adder_floor).rev() {
+    for i in (8..full_adder_floor).rev() {
         if _mm256_testz_si256(carry, carry) != 0 {
             break;
         }
@@ -115,7 +135,7 @@ unsafe fn bitsliced_add_grouped_avx_2<const N: usize>(a: &mut [__m256i; 64], b: 
     }
 
     // half adder with early exit
-    for i in (24..full_adder_floor).rev() {
+    for i in (8..full_adder_floor).rev() {
         if _mm256_testz_si256(carry, carry) != 0 {
             break;
         }
@@ -163,20 +183,6 @@ pub fn bitsliced_modulo_power_of_two_inline_avx_2(
     }
 
     Ok(())
-}
-
-//reduction function: (H+I)%MAX_SIZE
-//H=Hash,I=Index in chain,MAX_SIZE=Max size of output in power of 2
-#[target_feature(enable = "avx512f,avx512vl,avx512bw")]
-pub unsafe fn des_reduction_inline_avx_512(h: &mut [__m512i; 64], i: u64) {
-    unsafe { bitsliced_add_single_inline_avx_512(h, i) };
-    bitsliced_modulo_power_of_two_inline_avx_512(h, 56).unwrap();
-}
-
-#[target_feature(enable = "avx2")]
-pub unsafe fn des_reduction_inline_avx_2(h: &mut [__m256i; 64], i: u64) {
-    unsafe { bitsliced_add_single_inline_avx_2(h, i) };
-    bitsliced_modulo_power_of_two_inline_avx_2(h, 56).unwrap();
 }
 
 static USE_GFNI: OnceLock<bool> = OnceLock::new();
@@ -248,6 +254,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_reduction_avx_2_works() {
+        const MAX: u64 = (2 as u64).pow(56);
+        let a = [[MAX - 1; 256]];
+
+        let mut transposed = unsafe { transpose_avx_2::<1, 64>(&a) };
+        unsafe { des_reduction_inline_avx_2(&mut transposed, 11) };
+        let back = unsafe { transpose_back_avx_2::<1, 64>(&transposed) };
+
+        let expected = (MAX - 1).wrapping_add(11) % MAX;
+        for i in 0..256 {
+            assert_eq!(back[0][i], expected);
+        }
+    }
+
+    #[test]
+    fn test_reduction_avx_2_high_works() {
+        const MAX: u64 = (2 as u64).pow(56);
+        let a = [[u64::MAX - 1; 256]];
+
+        let mut transposed = unsafe { transpose_avx_2::<1, 64>(&a) };
+        unsafe { des_reduction_inline_avx_2(&mut transposed, 11) };
+        let back = unsafe { transpose_back_avx_2::<1, 64>(&transposed) };
+
+        let expected = (u64::MAX - 1).wrapping_add(11) % MAX;
+        for i in 0..256 {
+            assert_eq!(back[0][i], expected);
+        }
+    }
+
     #[target_feature(enable = "avx2")]
     pub unsafe fn transpose_avx_2<const T: usize, const L: usize>(
         blocks: &[[u64; 256]; T],
@@ -316,6 +352,25 @@ mod tests {
         }
         for i in 128..256 {
             assert_eq!(back[0][i], 1);
+        }
+    }
+
+    #[test]
+    fn test_reduction_grouped_avx_2_works() {
+        const MAX: u64 = (2 as u64).pow(56);
+        let mut a = [[MAX - 1; 256]];
+
+        let mut transposed = unsafe { transpose_avx_2::<1, 64>(&a) };
+        unsafe { des_reduction_grouped_avx_2(&mut transposed, &[11u64, 22u64]) };
+        let back = unsafe { transpose_back_avx_2::<1, 64>(&transposed) };
+
+        let expected_lower_half = (MAX - 1).wrapping_add(11) % MAX;
+        let expected_upper_half = (MAX - 1).wrapping_add(22) % MAX;
+        for i in 0..128 {
+            assert_eq!(back[0][i], expected_lower_half);
+        }
+        for i in 128..256 {
+            assert_eq!(back[0][i], expected_upper_half);
         }
     }
 
